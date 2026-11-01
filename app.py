@@ -2,11 +2,12 @@ import streamlit as st
 import google.generativeai as genai
 import random
 
-GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+@st.cache_resource
+def load_model():
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    return genai.GenerativeModel("gemini-3.8-flash")
 
-genai.configure(api_key=GEMINI_API_KEY)
-
-model = genai.GenerativeModel("gemini-3.8-flash")
+model = load_model()
 
 st.set_page_config(
     page_title="EduBot",
@@ -218,16 +219,29 @@ if st.sidebar.button("Check Answer"):
         )
 
 
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
+# Display previous messages
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.write(msg["content"])
 
+
+# Function to generate streaming responses
+def generate_reply(prompt):
+    response = model.generate_content(prompt, stream=True)
+
+    for chunk in response:
+        if chunk.text:
+            yield chunk.text
+
+
 user_input = st.chat_input("Ask any question...")
 
 if user_input:
+
     st.session_state.messages.append(
         {"role": "user", "content": user_input}
     )
@@ -236,52 +250,41 @@ if user_input:
         st.write(user_input)
 
     prompt = f"""
-You are EduBot, a helpful educational assistant for students.
+You are EduBot, a friendly AI educational assistant.
 
-You are EduBot, a friendly and intelligent educational helper for students.
+Help students understand different subjects, solve problems,
+prepare for exams, and learn new concepts.
 
-You help students learn Mathematics, Chemistry, English, Hindi Vocal Music, Artificial Intelligence, and other subjects.
+Subjects include Mathematics, Chemistry, English,
+Hindi Vocal Music, Physics, and Artificial Intelligence.
 
-You are not limited to one subject. Always answer the student's question according to what they ask, regardless of the currently selected subject.
+Always answer according to the student's question,
+regardless of the selected subject.
 
-Never describe yourself as a Mathematics chatbot, Chemistry chatbot, or any single-subject chatbot.
+Use simple language and explain difficult topics step by step.
 
-If a student asks who you are, say:
-"I am EduBot, your AI educational helper! I can help you understand concepts, solve problems, prepare for exams, and explore different subjects."
-Your selected subject is: {subject}
+Selected subject: {subject}
 
-- Mathematics: Explain and solve problems step by step.
-- Chemistry: Explain concepts, reactions, and equations.
-- English: Explain literature, grammar, and writing.
-- Hindi Vocal Music: Explain swaras, alankars, ragas, taal,
-  and vocal music theory.
-- Artificial Intelligence: Explain AI, Python, data science,
-  machine learning, and neural networks.
-- physics: Explain concepts, laws, and formulas.
+Student's question: {user_input}
 
-Use simple language and keep answers focused.
-
-Question:
-{user_input}
+Give a clear, helpful and focused answer.
 """
 
-    reply = ""
-
     with st.chat_message("assistant"):
-        answer_box = st.empty()
-
         try:
-            response = model.generate_content(prompt, stream=True)
+            reply = st.write_stream(generate_reply(prompt))
 
-            for chunk in response:
-                if chunk.text:
-                    reply += chunk.text
-                    answer_box.markdown(reply)
+            st.session_state.messages.append(
+                {"role": "assistant", "content": reply}
+            )
 
         except Exception as e:
-            reply = f"Error: {e}"
-            answer_box.error(reply)
+            error_message = str(e)
 
-    st.session_state.messages.append(
-        {"role": "assistant", "content": reply}
-    )
+            if "429" in error_message or "quota" in error_message.lower():
+                st.warning(
+                    "EduBot is receiving too many requests. "
+                    "Please wait a little and try again."
+                )
+            else:
+                st.error(f"Something went wrong: {error_message}")
